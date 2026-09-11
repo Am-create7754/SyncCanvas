@@ -1,0 +1,20 @@
+{
+  "name": "synccanvas",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "start": "node scripts/start.js",
+    "dev": "node scripts/start.js",
+    "dev:client": "npm run dev -w client",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build -w client",
+    "lint": "npm run lint -w client && npm run lint -w server",
+    "test": "npm run test -w client && npm run test -w server"
+  }
+}

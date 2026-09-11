@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (Tailwind v4 defaults to prefers-color-scheme only) so theme is
+   an explicit, independent per-user toggle rather than following the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+html, body, #app {
+  height: 100%;
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+body {
+  @apply bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+}
+
+/* Prevent the canvas surface from triggering touch-scroll/zoom gestures on trackpads/touch. */
+.canvas-surface {
+  touch-action: none;
+}
