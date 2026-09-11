@@ -71,6 +71,7 @@ export function hitTestObject(object, p, tolerance) {
     case 'rect':
     case 'sticky':
     case 'frame':
+    case 'text':
       return hitTestBoundingBox(object.points, localP, tolerance);
     default:
       return false;

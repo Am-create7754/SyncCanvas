@@ -114,6 +114,10 @@ export const TOOL_TYPES = {
   CONNECTOR: 'connector',
   STICKY: 'sticky',
   FRAME: 'frame',
+  // Final polish phase — a standalone text object. Deliberately NOT a SHAPE_TOOL: it's
+  // created by a single CLICK (a sensible default-size box, immediately editable), not a
+  // drag-to-size gesture — see CanvasEngine's text-tool pointer handling.
+  TEXT: 'text',
 };
 
 /** Tools whose geometry is only meaningful with exactly a start+end point (drag-to-size shapes). */
@@ -122,10 +126,28 @@ export const SHAPE_TOOLS = new Set([TOOL_TYPES.LINE, TOOL_TYPES.RECT, TOOL_TYPES
 export const FREEHAND_TOOLS = new Set([TOOL_TYPES.PATH, TOOL_TYPES.ERASER]);
 /** Closed shapes that can carry an interior fill — a line has no "inside", so it's
  *  excluded even though it's a SHAPE_TOOL. Connectors are excluded too — their "fill" is
- *  the stroke of the line itself, handled entirely by STYLE_FIELDS' color/width. */
+ *  the stroke of the line itself, handled entirely by STYLE_FIELDS' color/width. Standalone
+ *  text has no fill either — it's just glyphs, see TEXT_CAPABLE_TYPES below instead. */
 export const FILLABLE_TYPES = new Set([TOOL_TYPES.RECT, TOOL_TYPES.CIRCLE, TOOL_TYPES.STICKY, TOOL_TYPES.FRAME]);
 /** Style fields that can be edited on an existing object via OBJECT_UPDATE. */
 export const STYLE_FIELDS = ['color', 'width', 'fillEnabled', 'fillColor', 'fillOpacity'];
+
+/** Object types that can carry text content: standalone text objects, and shapes that can
+ *  hold text INSIDE them (rect/circle for the final-polish shape-text feature; sticky
+ *  notes already had plain text since Phase 12 and now also get the same formatting
+ *  fields). Frames/connectors already have their own distinct text-ish fields (`title`/
+ *  `label`) and are deliberately not extended here — see isValidCanvasObject. */
+export const TEXT_CAPABLE_TYPES = new Set([TOOL_TYPES.TEXT, TOOL_TYPES.RECT, TOOL_TYPES.CIRCLE, TOOL_TYPES.STICKY]);
+/** Canvas-safe font sizes/families/alignments a text object's formatting may use — a
+ *  closed enum (not free-form) so a malicious/buggy client can't smuggle arbitrary CSS
+ *  into `ctx.font`. */
+export const FONT_SIZES = [12, 14, 16, 18, 20, 24, 32, 40, 48];
+export const FONT_FAMILIES = ['Arial', 'Verdana', 'Georgia', 'Times New Roman', 'Courier New', 'sans-serif'];
+export const TEXT_ALIGNMENTS = ['left', 'center', 'right'];
+/** Text content + formatting fields — like CONNECTOR_PATCH_FIELDS, these are only ever
+ *  edited via BATCH_UPDATE (see isValidBatchPatch), never the single-object STYLE_FIELDS
+ *  path, since that path is reserved for color/width/fill*. */
+export const TEXT_PATCH_FIELDS = ['text', 'fontSize', 'fontFamily', 'bold', 'italic', 'underline', 'textAlign', 'textColor'];
 
 /** The four cardinal connection points a connectable shape offers (Phase 12). */
 export const CONNECTOR_ANCHORS = ['top', 'right', 'bottom', 'left'];

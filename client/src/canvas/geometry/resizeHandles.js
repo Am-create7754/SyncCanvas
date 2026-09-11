@@ -6,8 +6,11 @@ import { boundsOfPoints } from './points.js';
  *  Sticky notes and frames (Phase 12) use the exact same bbox-handle model as rect —
  *  resizing either just changes its 2-corner `points`, same as any other bbox shape.
  *  Connectors are excluded: their geometry is derived from two OTHER objects, never
- *  directly draggable. */
-export const RESIZABLE_TYPES = new Set(['rect', 'circle', 'line', 'sticky', 'frame']);
+ *  directly draggable. A standalone text object (final polish phase) uses the same
+ *  2-corner bbox model too — resizing it just changes the wrap width/clip height text
+ *  re-flows inside, same "resize = re-fit content into a bigger/smaller box" idea sticky
+ *  notes already established. */
+export const RESIZABLE_TYPES = new Set(['rect', 'circle', 'line', 'sticky', 'frame', 'text']);
 
 const MIN_SHAPE_SIZE = 2; // world units — keeps a bbox from collapsing to zero (divide-by-zero in circle rendering)
 

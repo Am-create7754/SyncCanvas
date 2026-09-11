@@ -6,6 +6,9 @@ import { bindKeyboardShortcuts } from './keyboardShortcuts.js';
 import { buildTopBar } from './topbar.js';
 import { buildToolbar } from './toolbar.js';
 import { mountMiniMap } from './minimap.js';
+import { buildPropertiesPanel } from './propertiesPanel.js';
+import { mountTextEditor } from './textEditor.js';
+import { buildHelpModal } from './helpModal.js';
 import { useToolStore } from '../store/useToolStore.js';
 import { useThemeStore } from '../store/useThemeStore.js';
 import { useCanvasSettingsStore } from '../store/useCanvasSettingsStore.js';
@@ -122,6 +125,9 @@ export async function renderRoom(root, roomId, navigate) {
   destroyFns.push(bridge(useToolStore, (s) => {
     engine.setTool(s.tool); engine.setColor(s.color); engine.setStrokeWidth(s.strokeWidth);
     engine.setFillEnabled(s.fillEnabled); engine.setFillColor(s.fillColor); engine.setFillOpacity(s.fillOpacity);
+    engine.setTextFontSize(s.textFontSize); engine.setTextFontFamily(s.textFontFamily);
+    engine.setTextBold(s.textBold); engine.setTextItalic(s.textItalic); engine.setTextUnderline(s.textUnderline);
+    engine.setTextAlign(s.textAlign); engine.setTextColor(s.textColor);
   }));
   destroyFns.push(bridge(useThemeStore, (s) => engine.setDarkMode(s.theme === 'dark')));
   destroyFns.push(bridge(useCanvasSettingsStore, (s) => {
@@ -169,11 +175,15 @@ export async function renderRoom(root, roomId, navigate) {
     if (cached) engine.applyRemoteViewport(cached);
   };
 
-  // ---- chrome: topbar / toolbar / zoom / minimap ----
+  // ---- chrome: topbar / toolbar / zoom / minimap / properties / text editor / help ----
+  const helpModal = buildHelpModal();
+  destroyFns.push(helpModal.destroy);
+
   const topBar = buildTopBar({
     roomId, onFollow: handleFollow,
     onUndo: () => connection.requestUndo(), onRedo: () => connection.requestRedo(),
     onExportJson: handleExportJson, onImportFile: handleImportFile, onExportPng: handleExportPng,
+    onOpenHelp: () => helpModal.open(),
   });
   destroyFns.push(topBar.destroy);
 
@@ -199,10 +209,14 @@ export async function renderRoom(root, roomId, navigate) {
   }, 'Start drawing — changes appear live for everyone in this room.');
   destroyFns.push(bridge(useCanvasMetaStore, (s) => { objectCountHint.style.display = s.objectCount > 0 ? 'none' : 'flex'; }));
 
-  surfaceArea.append(toolbar.el, canvasContainer, objectCountHint, zoomControls);
+  const propertiesPanel = buildPropertiesPanel(engine);
+  destroyFns.push(propertiesPanel.destroy);
+
+  surfaceArea.append(toolbar.el, canvasContainer, objectCountHint, zoomControls, propertiesPanel.el);
   el.prepend(topBar.el);
 
   destroyFns.push(mountMiniMap(surfaceArea, engine));
+  destroyFns.push(mountTextEditor(canvasContainer, engine));
 
   const unbindShortcuts = bindKeyboardShortcuts({
     engine,

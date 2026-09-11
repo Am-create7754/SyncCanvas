@@ -8,7 +8,7 @@ import { cloneObjectsForPaste } from '../clipboard.js';
 import { computeAlignPatches, computeDistributePatches } from '../geometry/align.js';
 import { LASER_FADE_MS } from '../rendering/drawLaser.js';
 import { generateId } from '../../utils/id.js';
-import { FREEHAND_TOOLS, SHAPE_TOOLS, FILLABLE_TYPES, LIMITS } from '@synccanvas/shared';
+import { FREEHAND_TOOLS, SHAPE_TOOLS, FILLABLE_TYPES, LIMITS, TEXT_CAPABLE_TYPES } from '@synccanvas/shared';
 import {
   ROTATABLE_TYPES, getObjectCenter, toLocalPoint, angleFromCenter, snapRotation,
   normalizeRotation, getRotationHandlePosition,
@@ -65,6 +65,8 @@ const HANDLE_HIT_TOLERANCE = 8; // screen px, divided by zoom before hit-testing
 const FPS_SAMPLE_INTERVAL_MS = 750; // how often the HUD's FPS number updates
 const SNAP_THRESHOLD_SCREEN_PX = 7; // spec suggests ~5-8px — converted to world units by /scale so it feels consistent at any zoom
 const DEFAULT_STICKY_FILL_COLOR = '#FEF3C7'; // matches drawSticky.js's own fallback yellow
+const DEFAULT_TEXT_WIDTH = 160; // world units — a new standalone text object's default box
+const DEFAULT_TEXT_HEIGHT = 44;
 
 /**
  * Owns the canvas element, the scene (object map + viewport), pointer/keyboard input,
@@ -176,6 +178,17 @@ export class CanvasEngine extends EventTarget {
     this.selfColor = '#6366F1'; // presentation color for laser — distinct from drawing `color`
     this.isDarkMode = false;
 
+    // ---- Final polish phase: text tool defaults (LOCAL "next text object" preferences,
+    // same treatment as color/fillColor above — never networked by themselves, only baked
+    // into an object at the moment one is created/edited). ----
+    this.textFontSize = 16;
+    this.textFontFamily = 'sans-serif';
+    this.textBold = false;
+    this.textItalic = false;
+    this.textUnderline = false;
+    this.textAlign = 'left';
+    this.textColor = '#1F2937';
+
     this.activeStrokeId = null; // freehand in progress
     this.pendingOutgoingPoints = [];
     this.lastAcceptedPoint = null;
@@ -199,6 +212,7 @@ export class CanvasEngine extends EventTarget {
     this._onPointerDown = this._onPointerDown.bind(this);
     this._onPointerMove = this._onPointerMove.bind(this);
     this._onPointerUp = this._onPointerUp.bind(this);
+    this._onDoubleClick = this._onDoubleClick.bind(this);
     this._onWheel = this._onWheel.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
@@ -212,6 +226,7 @@ export class CanvasEngine extends EventTarget {
     canvas.addEventListener('pointerdown', this._onPointerDown);
     window.addEventListener('pointermove', this._onPointerMove);
     window.addEventListener('pointerup', this._onPointerUp);
+    canvas.addEventListener('dblclick', this._onDoubleClick);
     canvas.addEventListener('wheel', this._onWheel, { passive: false });
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
@@ -224,6 +239,7 @@ export class CanvasEngine extends EventTarget {
     this.canvas.removeEventListener('pointerdown', this._onPointerDown);
     window.removeEventListener('pointermove', this._onPointerMove);
     window.removeEventListener('pointerup', this._onPointerUp);
+    this.canvas.removeEventListener('dblclick', this._onDoubleClick);
     this.canvas.removeEventListener('wheel', this._onWheel);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
@@ -266,6 +282,11 @@ export class CanvasEngine extends EventTarget {
     }
     this.tool = tool;
     this.markDirty();
+    // A sensible default cursor per tool (QoL) — the Select tool is the one exception,
+    // since its cursor is hover-dependent (see _updateSelectHoverCursor) and would just
+    // get overwritten on the next pointermove anyway.
+    if (this.canvas && tool !== 'select') this.canvas.style.cursor = tool === 'text' ? 'text' : 'crosshair';
+    else if (this.canvas) this.canvas.style.cursor = '';
   }
   /** LOCAL UI preference for newly-created connectors, and what a "Toggle Connector
    *  Routing" command flips — reusing this straight/elbow split, not a per-connector
@@ -282,6 +303,15 @@ export class CanvasEngine extends EventTarget {
   /** Theme is LOCAL STATE (see Room.jsx) — the engine only needs to know it to pick a
    *  visible dot-grid color; it never affects anything sent over the network. */
   setDarkMode(isDark) { this.isDarkMode = isDark; this.markDirty(); }
+
+  // ---- Final polish phase: "next text object" defaults (LOCAL, see constructor) ----
+  setTextFontSize(size) { this.textFontSize = size; }
+  setTextFontFamily(family) { this.textFontFamily = family; }
+  setTextBold(bold) { this.textBold = bold; }
+  setTextItalic(italic) { this.textItalic = italic; }
+  setTextUnderline(underline) { this.textUnderline = underline; }
+  setTextAlign(align) { this.textAlign = align; }
+  setTextColor(color) { this.textColor = color; }
 
   // ---- Phase 11: smart canvas settings (all LOCAL — see useCanvasSettingsStore) ----
   setGridEnabled(enabled) { this.gridEnabled = enabled; this.markDirty(); }
@@ -388,6 +418,55 @@ export class CanvasEngine extends EventTarget {
     if (this.isLockedByOther(obj.id)) { this._notifyLockConflict(obj.id); return; }
     this.commitBatchUpdate([{ id: obj.id, patch: { title } }], 'OBJECT_STYLE_CHANGE');
     this._touchStyleLock(obj.id);
+  }
+
+  /**
+   * Final polish phase — edits text CONTENT and/or FORMATTING (text/fontSize/fontFamily/
+   * bold/italic/underline/textAlign/textColor) on the selected object. Valid on a
+   * standalone text object and on any shape that can carry embedded text (rect/circle/
+   * sticky — see shared TEXT_CAPABLE_TYPES). Same BATCH_UPDATE-only field treatment as
+   * editSelectedConnector/editSelectedStickyText/editSelectedFrameTitle above — these
+   * fields live in TEXT_PATCH_FIELDS, not STYLE_FIELDS, so a single-object edit still
+   * goes through commitBatchUpdate rather than the color/width/fill* OBJECT_UPDATE path.
+   * One call handles BOTH the inline text editor's content commit (`{text}`) and the
+   * properties panel's formatting toggles (`{bold: true}`, `{textAlign: 'center'}`, ...).
+   */
+  editSelectedText(patch) {
+    const obj = this.getSelectedObject();
+    if (!obj || !TEXT_CAPABLE_TYPES.has(obj.type)) return;
+    if (this.isLockedByOther(obj.id)) { this._notifyLockConflict(obj.id); return; }
+    this.commitBatchUpdate([{ id: obj.id, patch }], 'OBJECT_STYLE_CHANGE');
+    this._touchStyleLock(obj.id);
+  }
+
+  /**
+   * Creates a brand-new standalone text object centered on `worldPoint`, stamped with the
+   * current "next text" formatting defaults (see constructor / setText* methods) — the
+   * click-to-create counterpart to a shape tool's drag-to-create. Deliberately does
+   * NOTHING (no object, no network traffic) for blank/whitespace-only text — the click-
+   * then-immediately-cancel path a text tool naturally has (spec: "prevent accidental
+   * text creation"), same discipline connector-draft-cancel already follows for its tool.
+   * @returns {object|null} the created object, or null if `text` was empty
+   */
+  createTextObject(worldPoint, text) {
+    if (!text || !text.trim()) return null;
+    const halfW = DEFAULT_TEXT_WIDTH / 2;
+    const halfH = DEFAULT_TEXT_HEIGHT / 2;
+    const object = {
+      id: generateId(), type: 'text', color: this.textColor, width: 1,
+      points: [
+        { x: worldPoint.x - halfW, y: worldPoint.y - halfH },
+        { x: worldPoint.x + halfW, y: worldPoint.y + halfH },
+      ],
+      text,
+      fontSize: this.textFontSize, fontFamily: this.textFontFamily,
+      bold: this.textBold, italic: this.textItalic, underline: this.textUnderline,
+      textAlign: this.textAlign, textColor: this.textColor,
+      createdAt: Date.now(),
+    };
+    this.commitCreateObjects([object]);
+    this.selectOnly(object.id);
+    return object;
   }
 
   /** @returns {object|null} the selected object, only when exactly one is selected. */
@@ -1058,6 +1137,18 @@ export class CanvasEngine extends EventTarget {
       return;
     }
 
+    if (this.tool === 'text') {
+      // The text-edit overlay (ui/textEditor.js) focuses a <textarea> synchronously in
+      // response to the request-text-edit event this dispatches. Without preventDefault
+      // here, the canvas (not focusable) still runs its native mousedown default action
+      // right after, which blurs whatever just took focus back to <body> — destroying the
+      // overlay before a single character can be typed. dblclick-triggered editing never
+      // hit this because dblclick fires after that default action has already settled.
+      e.preventDefault();
+      this._handleTextPointerDown(worldPoint);
+      return;
+    }
+
     if (FREEHAND_TOOLS.has(this.tool)) {
       const id = generateId();
       this.activeStrokeId = id;
@@ -1182,6 +1273,48 @@ export class CanvasEngine extends EventTarget {
     // Smart-guide/snap candidates are every OTHER object — rebuilt once here (O(n)) rather
     // than scanned fresh on every pointermove for the rest of the drag (see SpatialHash).
     this._spatialHash.rebuild(this.objects, this.selectedObjectIds);
+  }
+
+  // ---- Final polish phase: text tool ----
+
+  /**
+   * Pointerdown routing for the Text tool: clicking an EXISTING text-capable object
+   * (rect/circle/sticky/text — see TEXT_CAPABLE_TYPES) selects it and asks the UI layer to
+   * open its inline editor (the DOM-overlay editing surface lives outside the engine —
+   * see ui/textEditor.js — so this just dispatches a request, same "engine proposes, UI
+   * layer handles DOM" split every other framework-facing concern here already follows).
+   * Clicking EMPTY canvas asks for a brand-new text object at that point instead — nothing
+   * is actually created here; see createTextObject, called once the UI layer's editor
+   * commits non-empty text (never on cancel/empty, so a stray click never litters the room
+   * with a blank text object).
+   */
+  _handleTextPointerDown(worldPoint) {
+    const hitId = hitTestScene(this.objects, worldPoint, SELECT_HIT_TOLERANCE / this.viewport.scale);
+    if (hitId) {
+      const obj = this.objects.get(hitId);
+      if (obj && TEXT_CAPABLE_TYPES.has(obj.type)) {
+        if (this.isLockedByOther(hitId)) { this._notifyLockConflict(hitId); return; }
+        this.selectOnly(hitId);
+        this.dispatchEvent(new CustomEvent('request-text-edit', { detail: { id: hitId, isNew: false } }));
+      }
+      return;
+    }
+    this.dispatchEvent(new CustomEvent('request-text-edit', { detail: { id: null, isNew: true, point: worldPoint } }));
+  }
+
+  /** Double-clicking any text-capable object (regardless of active tool) opens its inline
+   *  editor — the "double-click text to edit" affordance every canvas editor has, reusing
+   *  the exact same request-text-edit path the Text tool itself uses. */
+  _onDoubleClick(e) {
+    if (this.historicalPreview) return;
+    const worldPoint = screenToWorld(this._screenPoint(e), this.viewport);
+    const hitId = hitTestScene(this.objects, worldPoint, SELECT_HIT_TOLERANCE / this.viewport.scale);
+    if (!hitId) return;
+    const obj = this.objects.get(hitId);
+    if (!obj || !TEXT_CAPABLE_TYPES.has(obj.type)) return;
+    if (this.isLockedByOther(hitId)) { this._notifyLockConflict(hitId); return; }
+    this.selectOnly(hitId);
+    this.dispatchEvent(new CustomEvent('request-text-edit', { detail: { id: hitId, isNew: false } }));
   }
 
   // ---- Phase 12: connector tool (anchor hit-testing — see connector.js for the geometry) ----
@@ -1463,7 +1596,20 @@ export class CanvasEngine extends EventTarget {
         this.markDirty();
       }
     } else if (this.activeStrokeId && this.shapeStart) {
-      this.previewObject = { ...this.previewObject, points: [this.shapeStart, worldPoint] };
+      // QoL: Shift constrains a rectangle/circle to a square/perfect circle while
+      // drawing — the diagonal's larger axis wins, same "hold Shift to constrain"
+      // convention the rotation handle's 15° snap already uses elsewhere.
+      let endPoint = worldPoint;
+      if (e.shiftKey && (this.tool === 'rect' || this.tool === 'circle')) {
+        const dx = worldPoint.x - this.shapeStart.x;
+        const dy = worldPoint.y - this.shapeStart.y;
+        const size = Math.max(Math.abs(dx), Math.abs(dy));
+        endPoint = {
+          x: this.shapeStart.x + (dx < 0 ? -size : size),
+          y: this.shapeStart.y + (dy < 0 ? -size : size),
+        };
+      }
+      this.previewObject = { ...this.previewObject, points: [this.shapeStart, endPoint] };
       this.markDirty();
     }
   }

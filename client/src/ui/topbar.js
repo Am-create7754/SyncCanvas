@@ -125,7 +125,7 @@ function buildDocumentNameField() {
  * equivalent of TopBar.jsx + the components it composed.
  * @returns {{el:HTMLElement, destroy:Function}}
  */
-export function buildTopBar({ roomId, onFollow, onUndo, onRedo, onExportJson, onImportFile, onExportPng }) {
+export function buildTopBar({ roomId, onFollow, onUndo, onRedo, onExportJson, onImportFile, onExportPng, onOpenHelp }) {
   const presence = buildPresenceList(onFollow);
   const connection = buildConnectionStatus();
   const autosave = buildAutosaveIndicator();
@@ -166,6 +166,10 @@ export function buildTopBar({ roomId, onFollow, onUndo, onRedo, onExportJson, on
     type: 'button', class: 'rounded-lg px-2.5 py-1.5 text-sm font-semibold text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800', title: 'Import SyncCanvas file',
     onclick: () => importInput.click(),
   }, '↑ Import');
+  const helpBtn = h('button', {
+    type: 'button', class: 'flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800', title: 'Help / Instructions',
+    'aria-label': 'Help and instructions', onclick: onOpenHelp,
+  }, '?');
 
   const el = h('header', {
     class: 'flex min-h-14 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-gray-200 bg-white px-3 py-2 sm:h-14 sm:flex-nowrap sm:py-0 sm:px-4 dark:border-gray-800 dark:bg-gray-900',
@@ -178,7 +182,7 @@ export function buildTopBar({ roomId, onFollow, onUndo, onRedo, onExportJson, on
       connection.el,
     ]),
     h('div', { class: 'flex shrink-0 items-center gap-1 sm:gap-2' }, [
-      presence.el, importInput, importBtn, fileMenuBtn, pngBtn, undoBtn, redoBtn, themeBtn,
+      presence.el, importInput, importBtn, fileMenuBtn, pngBtn, undoBtn, redoBtn, themeBtn, helpBtn,
     ]),
   ]);
 

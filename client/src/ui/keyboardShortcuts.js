@@ -3,7 +3,7 @@ import { useDevStore } from '../store/useDevStore.js';
 
 const TOOL_KEYS = {
   p: 'path', e: 'eraser', l: 'line', r: 'rect', c: 'circle', v: 'select', g: 'laser',
-  x: 'connector', s: 'sticky', f: 'frame',
+  x: 'connector', s: 'sticky', f: 'frame', t: 'text',
 };
 
 /**

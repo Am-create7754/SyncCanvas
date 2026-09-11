@@ -2,6 +2,7 @@ import { LIMITS } from '../constants/limits.js';
 import {
   TOOL_TYPES, STYLE_FIELDS, HISTORY_OP_TYPES, BATCH_OP_TYPES,
   CONNECTOR_ANCHORS, CONNECTOR_ROUTINGS, CONNECTOR_PATCH_FIELDS,
+  FONT_SIZES, FONT_FAMILIES, TEXT_ALIGNMENTS, TEXT_PATCH_FIELDS,
 } from '../constants/events.js';
 
 const ALLOWED_OBJECT_KEYS = new Set([
@@ -9,13 +10,16 @@ const ALLOWED_OBJECT_KEYS = new Set([
   // Phase 12 diagramming fields — only meaningful (and only ever present) on their own
   // object type; isValidCanvasObject's per-type checks below enforce that, not this whitelist.
   'start', 'end', 'routing', 'arrowStart', 'arrowEnd', 'label', 'text', 'title',
+  // Final polish phase — text content + formatting, valid on TEXT_CAPABLE_TYPES.
+  'fontSize', 'fontFamily', 'bold', 'italic', 'underline', 'textAlign', 'textColor',
 ]);
 const ALLOWED_METADATA_KEYS = new Set(['name', 'createdAt', 'updatedAt']);
 /** Fields a batch-update (move/resize/rotate/align/distribute/group/ungroup/connector-
- *  attributes/sticky-text/frame-title) is allowed to touch on an existing object —
- *  geometry + grouping + rotation + style + the Phase 12 diagramming fields, so one
- *  validator covers every multi-object transaction regardless of object type. */
-const BATCH_PATCH_FIELDS = ['points', 'groupId', 'rotation', ...STYLE_FIELDS, ...CONNECTOR_PATCH_FIELDS, 'text', 'title'];
+ *  attributes/sticky-text/frame-title/shape-or-standalone-text) is allowed to touch on an
+ *  existing object — geometry + grouping + rotation + style + the Phase 12 diagramming
+ *  fields + text content/formatting, so one validator covers every multi-object
+ *  transaction regardless of object type. */
+const BATCH_PATCH_FIELDS = ['points', 'groupId', 'rotation', ...STYLE_FIELDS, ...CONNECTOR_PATCH_FIELDS, ...TEXT_PATCH_FIELDS, 'title'];
 const REORDER_OPS = new Set(['front', 'back', 'forward', 'backward']);
 
 const isFiniteNum = (n) => typeof n === 'number' && Number.isFinite(n);
@@ -143,6 +147,31 @@ export function isValidFrameTitle(title) {
   return typeof title === 'string' && title.length <= LIMITS.MAX_FRAME_TITLE_LEN && !/[<>]/.test(title);
 }
 
+// ---- Final polish phase: text content + formatting (standalone text objects, and text
+// embedded inside a shape — see TEXT_CAPABLE_TYPES) ----
+
+/** @returns {boolean} true if `text` is safe, bounded text content — reused for a
+ *  standalone text object's own text and for text embedded inside a shape (the same
+ *  bound sticky notes already used, extended to every TEXT_CAPABLE_TYPES member). */
+export function isValidObjectText(text) {
+  return isValidStickyText(text);
+}
+
+/** @returns {boolean} true if `size` is one of the fixed, canvas-safe font sizes. */
+export function isValidFontSize(size) {
+  return FONT_SIZES.includes(size);
+}
+
+/** @returns {boolean} true if `family` is one of the fixed, web-safe font families. */
+export function isValidFontFamily(family) {
+  return FONT_FAMILIES.includes(family);
+}
+
+/** @returns {boolean} true if `align` is a recognized text alignment. */
+export function isValidTextAlign(align) {
+  return TEXT_ALIGNMENTS.includes(align);
+}
+
 /**
  * Validates a partial object-style patch (color/width/fillEnabled/fillColor/fillOpacity).
  * Every key present must be one of STYLE_FIELDS and pass its own type check; unknown keys
@@ -212,8 +241,19 @@ export function isValidCanvasObject(obj) {
   if (obj.arrowStart !== undefined && typeof obj.arrowStart !== 'boolean') return false;
   if (obj.arrowEnd !== undefined && typeof obj.arrowEnd !== 'boolean') return false;
   if (obj.label !== undefined && !isValidConnectorLabel(obj.label)) return false;
-  if (obj.text !== undefined && !isValidStickyText(obj.text)) return false;
+  // A standalone text object is meaningless with no `text` field at all (same "REQUIRED"
+  // treatment as a connector's start/end above) — every other TEXT_CAPABLE_TYPES member
+  // (rect/circle/sticky) treats it as optional, "missing means no embedded text yet".
+  if (obj.type === 'text' && obj.text === undefined) return false;
+  if (obj.text !== undefined && !isValidObjectText(obj.text)) return false;
   if (obj.title !== undefined && !isValidFrameTitle(obj.title)) return false;
+  if (obj.fontSize !== undefined && !isValidFontSize(obj.fontSize)) return false;
+  if (obj.fontFamily !== undefined && !isValidFontFamily(obj.fontFamily)) return false;
+  if (obj.bold !== undefined && typeof obj.bold !== 'boolean') return false;
+  if (obj.italic !== undefined && typeof obj.italic !== 'boolean') return false;
+  if (obj.underline !== undefined && typeof obj.underline !== 'boolean') return false;
+  if (obj.textAlign !== undefined && !isValidTextAlign(obj.textAlign)) return false;
+  if (obj.textColor !== undefined && !isValidColor(obj.textColor)) return false;
   return true;
 }
 
@@ -243,8 +283,15 @@ export function isValidBatchPatch(patch) {
       case 'arrowStart': if (typeof patch.arrowStart !== 'boolean') return false; break;
       case 'arrowEnd': if (typeof patch.arrowEnd !== 'boolean') return false; break;
       case 'label': if (!isValidConnectorLabel(patch.label)) return false; break;
-      case 'text': if (!isValidStickyText(patch.text)) return false; break;
+      case 'text': if (!isValidObjectText(patch.text)) return false; break;
       case 'title': if (!isValidFrameTitle(patch.title)) return false; break;
+      case 'fontSize': if (!isValidFontSize(patch.fontSize)) return false; break;
+      case 'fontFamily': if (!isValidFontFamily(patch.fontFamily)) return false; break;
+      case 'bold': if (typeof patch.bold !== 'boolean') return false; break;
+      case 'italic': if (typeof patch.italic !== 'boolean') return false; break;
+      case 'underline': if (typeof patch.underline !== 'boolean') return false; break;
+      case 'textAlign': if (!isValidTextAlign(patch.textAlign)) return false; break;
+      case 'textColor': if (!isValidColor(patch.textColor)) return false; break;
       default: return false;
     }
   }
